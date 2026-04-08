@@ -112,7 +112,7 @@ return path.Skip(1).Sum(node => node.MovementCost);
 ### Running the Project
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/hex-grid-logistics-system.git
+git clone https://github.com/77natsu77/hex-grid-logistics-system.git
 cd hex-grid-logistics-system
 dotnet run
 ```
