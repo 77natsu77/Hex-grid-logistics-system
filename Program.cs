@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -12,17 +13,17 @@ namespace Hex_Grid_logistics_system
     {
         static void Main(string[] args)
         {
-	// trying to collapse data structures to obtain as much O(1) as possible and have millions of nodes at a time
+	// basically done collapsing data structures, implemented a priority queue for O(log n) instead of O(n) when selecting the firstmost node
             HexNode[] map = new HexNode[1000000];
-            int radius = 5;
-            HexGrid myGrid = new HexGrid();
+            int radius = 300;
+            HexGrid myGrid = new HexGrid(radius);
             myGrid.GenerateMap();
 
             Console.WriteLine($"Map generated with radius {radius}.");
 
             // Test a coordinate
             HexCoords center = new HexCoords(0, 0, 0);
-            HexNode centerNode = myGrid.GetNode(center);
+            HexNode centerNode = myGrid.GetNodeByCoords(center);
 
             if (centerNode.hasValue)
             {
@@ -38,8 +39,8 @@ namespace Hex_Grid_logistics_system
 
             Agent myAgent = new Agent(centerNode);
             Pathfinder myPathfinder = new Pathfinder();
-            HexCoords destCoords = new HexCoords(5, -3, -2);
-            HexNode DestinationNode = myGrid.GetNode(destCoords);
+            HexCoords destCoords = new HexCoords(66, 68, -134);
+            HexNode DestinationNode = myGrid.GetNodeByCoords(destCoords);
 
             if (!DestinationNode.hasValue)
             {
@@ -51,13 +52,14 @@ namespace Hex_Grid_logistics_system
             }
             else
             {
-                List<HexNode> path = myPathfinder.FindPath(myGrid, centerNode, DestinationNode);
+                List<int> pathIndices = myPathfinder.FindPath(myGrid, centerNode, DestinationNode);
 
-                if (path != null)
+                if (pathIndices != null)
                 {
-                    Console.WriteLine("path: ");
-                    foreach (HexNode node in path)
+                    Console.WriteLine("Path: ");
+                    foreach (int index in pathIndices)
                     {
+                        HexNode node = myGrid.GetNodeByIndex(index);
                         Console.WriteLine($"Q:{node.Coords.Q} R: {node.Coords.R} S: {node.Coords.S}");
                     }
                 }
@@ -75,9 +77,26 @@ namespace Hex_Grid_logistics_system
         {
             private HexNode[] _nodes;
             private int _radius;
+            private int _width;
 
-            public HexGrid(int radius) => _radius = radius;
-            public HexNode GetNode(HexCoords coords)
+            public HexGrid(int radius)
+            {
+                _radius = radius;
+                _width = 2 * _radius + 1;
+                _nodes = new HexNode[_width * _width];
+            }
+
+            // Helper to get the index directly for the Pathfinder to use
+            public int GetIndex(HexCoords coords)
+            {
+                return (coords.R + _radius) * _width + (coords.Q + _radius);
+            }
+
+            public HexNode GetNodeByIndex(int index) => _nodes[index]; // should add exception handling here...
+
+            public int GetTotalSize() =>  _width * _width;
+
+            public HexNode GetNodeByCoords(HexCoords coords)
             {
                 //  Math-based Bounds Check
                 if (Math.Abs(coords.Q) > _radius || Math.Abs(coords.R) > _radius || Math.Abs(coords.S) > _radius)
@@ -85,13 +104,13 @@ namespace Hex_Grid_logistics_system
                     return new HexNode(); // Out of bounds, return empty struct
                 }
                 // Get index from flattened 2D array
-                int width = _radius * 2 + 1;
                 int q_offset = coords.Q + _radius;
                 int r_offset = coords.R + _radius;
-                int i = r_offset * width + q_offset;
+                int i = r_offset * _width + q_offset;
 
                 return _nodes[i];
             }
+
             public List<HexNode> GetNeighbors(HexNode center)
             {
                 List<HexNode> neighbours = new List<HexNode>();
@@ -100,17 +119,30 @@ namespace Hex_Grid_logistics_system
                 {
 
                     HexCoords newCoords = center.Coords + currentCoords;
-                    HexNode newNode = GetNode(newCoords);
+                    HexNode newNode = GetNodeByCoords(newCoords);
                     if (newNode.hasValue) neighbours.Add(newNode);
                 }
 
                 return neighbours;
             }
+            public List<int> GetNeighborIndices(int centerIndex)
+            {
+                HexNode center = GetNodeByIndex(centerIndex);
+                List<int> neighbourIndices = new List<int>();
+                // We calculate the 6 possible neighbor coordinates and look them up.
+                foreach (HexCoords currentCoords in HexCoords.Directions)
+                {
+
+                    HexCoords newCoords = center.Coords + currentCoords;
+                    HexNode newNode = GetNodeByCoords(newCoords);
+                    if (newNode.hasValue) neighbourIndices.Add(GetIndex(newNode.Coords));
+                }
+
+                return neighbourIndices;
+            }
 
             public void GenerateMap()
             {
-                int width = 2 * _radius + 1;
-                _nodes = new HexNode[width * width];
                 Random rand = new Random();
                 for (int q = -_radius; q <= _radius; q++)
                 {
@@ -133,11 +165,13 @@ namespace Hex_Grid_logistics_system
                         HexNode newNode = new HexNode(coords, terrainType);
                         int q_offset = q + _radius;
                         int r_offset = r + _radius;
-                        int i = r_offset * width + q_offset; // Essentially reducing a 2d list to a 1d one, y * width + x, but we add an offset because we loop from -radius->radius, and a negative number would give an out of inder error
+                        int i = r_offset * _width + q_offset; // Essentially reducing a 2d list to a 1d one, y * width + x, but we add an offset because we loop from -radius->radius, and a negative number would give an out of inder error
                         _nodes[i] = newNode;
                     }
                 }
             }
+
+            public int GetHeuristic(int i, int j) => GetNodeByIndex(i).Coords.GetDistance(GetNodeByIndex(j).Coords);
         }
 
          public  struct HexNode
@@ -153,67 +187,74 @@ namespace Hex_Grid_logistics_system
                 Type = type;
                 MovementCost = Type.movementCost;
                 IsPassable = Type.passable;
-                hasValue = false;
+                hasValue = true;
             }
         }
 
         class Pathfinder
         {
+            private int[] _cameFrom;
+            private int[] _costSoFar;
 
-            private float Heuristic(HexNode a, HexNode b)
+            public List<int> FindPath(HexGrid grid, HexNode start, HexNode end)
             {
-                // A* performs best when the heuristic is mathematically sound!
-                return a.Coords.GetDistance(b.Coords);
-            }
+                int mapSize = grid.GetTotalSize(); // width * width
+                int endIndex = grid.GetIndex(end.Coords);
+                int startIndex = grid.GetIndex(start.Coords);
+                // parallel arrays
+                _cameFrom = new int[mapSize];
+                _costSoFar = new int[mapSize];
 
-            public List<HexNode> FindPath(HexGrid grid, HexNode start, HexNode end)
-            {
-                List<HexNode> openSet = new List<HexNode> { start };
-                Dictionary<HexNode, HexNode> cameFrom = new Dictionary<HexNode, HexNode>();
-                Dictionary<HexNode, int> costSoFar = new Dictionary<HexNode, int>();
+                // Initialize with sentinels, Array.Fill not available on current .Net version...
 
-                cameFrom[start] = new HexNode();
-                costSoFar[start] = 0;
+                for (int i = 0; i < _cameFrom.Length; i++) { _cameFrom[i] = -1; }
+                for (int i = 0; i < _costSoFar.Length; i++) { _costSoFar[i] = int.MaxValue; }
+
+                // 2. PriorityQueue <NodeIndex, Priority>
+                // Priority is f(n) = g(n) + h(n)
+                var openSet = new SimplePriorityQueue();
+
+                _costSoFar[startIndex] = 0;
+                openSet.Enqueue(startIndex, 0);
 
                 while (openSet.Count > 0)
                 {
-                    // Sort and pick the best node
-                    HexNode current = openSet.OrderBy(n => costSoFar[n] + Heuristic(n, end)).First();
+                    int current = openSet.Dequeue();
 
-                    //  Remove it so we don't process it again
-                    openSet.Remove(current);
-
-                    if (current.Coords == end.Coords)
+                    if (current == endIndex)
                     {
                         // RECONSTRUCT PATH
-                        List<HexNode> path = new List<HexNode>();
-                        HexNode temp = end;
-                        while (temp.hasValue)
+                        List<int> path = new List<int>();
+                        int temp = endIndex;
+                        while (temp != -1)
                         {
                             path.Add(temp);
-                            temp = cameFrom[temp];
+                            temp = _cameFrom[temp];
                         }
-                        path.Reverse(); // Turn End->Start into Start->End
+                        path.Reverse();
                         return path;
                     }
 
-                    foreach (HexNode neighbor in grid.GetNeighbors(current))
+                    foreach (int neighbor in grid.GetNeighborIndices(current))
                     {
-                        if (!neighbor.IsPassable) continue; // Skip walls/mountains
+                        // Skip invalid/unpassable neighbors
+                        var node = grid.GetNodeByIndex(neighbor);
+                        if (!node.hasValue || !node.IsPassable) continue;
 
-                        int newCost = costSoFar[current] + neighbor.MovementCost;
+                        int newCost = _costSoFar[current] + node.MovementCost;
 
-                        if (!costSoFar.ContainsKey(neighbor) || newCost < costSoFar[neighbor]) //it hasn't been recorded yet or a better path, one with a lower cost
+                        if (newCost < _costSoFar[neighbor])
                         {
-                            costSoFar[neighbor] = newCost;
-                            cameFrom[neighbor] = current;
+                            _costSoFar[neighbor] = newCost;
+                            _cameFrom[neighbor] = current;
 
-                            if (!openSet.Contains(neighbor))
-                                openSet.Add(neighbor);
+                            // Priority = Cost + Heuristic
+                            int priority = newCost + grid.GetHeuristic(neighbor, endIndex);
+                            openSet.Enqueue(neighbor, priority);
                         }
                     }
                 }
-                return null; // No path possible
+                return null; // No path found
             }
         }
 
@@ -221,7 +262,6 @@ namespace Hex_Grid_logistics_system
         {
             public HexNode CurrentLocation;
             public int MovementPoints;
-
             public void Requestpath(HexNode destination)
             {
 
@@ -248,7 +288,7 @@ namespace Hex_Grid_logistics_system
                 CurrentLocation = location;
             }
         }
-
+           
          public struct HexCoords
         {
             public int Q { get; }
@@ -296,7 +336,7 @@ namespace Hex_Grid_logistics_system
             }
             public static bool operator !=(HexCoords a, HexCoords b)
             {
-                return a.Q != b.Q && a.R != b.R && a.S != b.S;
+                return !(a == b);
             }
 
         }
@@ -324,6 +364,83 @@ namespace Hex_Grid_logistics_system
                 // We don't pay for the tile we are already standing on.
                 // Skip(1) starts the sum from the first move.
                 return path.Skip(1).Sum(node => node.MovementCost);
+            }
+        }
+
+        public class SimplePriorityQueue // Had to use this since the normal priority queue wasn't available
+        {
+            // Flattening to a 1D array once again, this time a tree (as this is implemented as a binary min-heap)
+            //Its Left Child is always at index 2i + 1
+            // Its Right Child is always at index 2i + 2
+            //Its Parent is always at index $(i - 1) / 2 (using integer division)
+
+            // Stores tuples of (NodeIndex, PriorityScore)
+            private List<(int Item, int Priority)> _elements = new List<(int, int)>();
+
+            public int Count => _elements.Count;
+
+            public void Enqueue(int item, int priority)
+            {
+                _elements.Add((item, priority));
+
+                // "Bubble Up" the new item to its correct position
+                int childIndex = _elements.Count - 1;
+                while (childIndex > 0)
+                {
+                    int parentIndex = (childIndex - 1) / 2;
+
+                    // If the child is worse or equal to the parent, stop
+                    if (_elements[childIndex].Priority >= _elements[parentIndex].Priority)
+                        break;
+
+                    // Swap child and parent
+                    var tmp = _elements[childIndex];
+                    _elements[childIndex] = _elements[parentIndex];
+                    _elements[parentIndex] = tmp;
+
+                    childIndex = parentIndex;
+                }
+            }
+
+            public int Dequeue()
+            {
+                int firstItem = _elements[0].Item;
+                int lastIndex = _elements.Count - 1;
+
+                // Move the last item to the top and remove the duplicate at the end
+                _elements[0] = _elements[lastIndex];
+                _elements.RemoveAt(lastIndex);
+                lastIndex--;
+
+                // "Bubble Down" the new top item to its correct position
+                int parentIndex = 0;
+                while (true)
+                {
+                    int leftChildIndex = parentIndex * 2 + 1;
+                    if (leftChildIndex > lastIndex) break; // No children left
+
+                    int rightChildIndex = leftChildIndex + 1;
+                    int minIndex = leftChildIndex;
+
+                    // Find the smaller of the two children
+                    if (rightChildIndex <= lastIndex && _elements[rightChildIndex].Priority < _elements[leftChildIndex].Priority)
+                    {
+                        minIndex = rightChildIndex;
+                    }
+
+                    // If the parent is already better than both children, stop
+                    if (_elements[parentIndex].Priority <= _elements[minIndex].Priority)
+                        break;
+
+                    // Swap parent and the smallest child
+                    var tmp = _elements[parentIndex];
+                    _elements[parentIndex] = _elements[minIndex];
+                    _elements[minIndex] = tmp;
+
+                    parentIndex = minIndex;
+                }
+
+                return firstItem;
             }
         }
     }
