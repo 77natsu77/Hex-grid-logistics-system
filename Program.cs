@@ -13,7 +13,8 @@ namespace Hex_Grid_logistics_system
     {
         static void Main(string[] args)
         {
-	// basically done collapsing data structures, implemented a priority queue for O(log n) instead of O(n) when selecting the firstmost node
+            // ADDED FUEL CONSTRAINT
+            // I WILL WORK TOWARDS ADDING MORE CONSTRAINTS AND OBJECTIVE FUNCTIONS AND STUFF IN THE FUTURE AS THIS PROJECT WAS MEANT TO BE GRAPH THEORY PRACTICE I FORGOT ABOUT
             HexNode[] map = new HexNode[1000000];
             int radius = 300;
             HexGrid myGrid = new HexGrid(radius);
@@ -39,7 +40,7 @@ namespace Hex_Grid_logistics_system
 
             Agent myAgent = new Agent(centerNode);
             Pathfinder myPathfinder = new Pathfinder();
-            HexCoords destCoords = new HexCoords(66, 68, -134);
+            HexCoords destCoords = new HexCoords(50, 50, -100);
             HexNode DestinationNode = myGrid.GetNodeByCoords(destCoords);
 
             if (!DestinationNode.hasValue)
@@ -52,20 +53,29 @@ namespace Hex_Grid_logistics_system
             }
             else
             {
-                List<int> pathIndices = myPathfinder.FindPath(myGrid, centerNode, DestinationNode);
-
-                if (pathIndices != null)
+                // Pass the agent's fuel and set ignoreFuelConstraint to true to get diagnostic data
+                PathResult result = myPathfinder.FindPath(myGrid, centerNode, DestinationNode, 100, true);
+                switch (result.Status)
                 {
-                    Console.WriteLine("Path: ");
-                    foreach (int index in pathIndices)
-                    {
-                        HexNode node = myGrid.GetNodeByIndex(index);
-                        Console.WriteLine($"Q:{node.Coords.Q} R: {node.Coords.R} S: {node.Coords.S}");
-                    }
-                }
-                else
-                {
-                    Console.WriteLine("No path possible");
+                    case PathStatus.Success:
+                        Console.WriteLine($"Path found! It will cost {result.TotalCost} fuel.");
+                        foreach (int index in result.Path)
+                        {
+                            HexNode node = myGrid.GetNodeByIndex(index);
+                            Console.WriteLine($"Q:{node.Coords.Q} R: {node.Coords.R} S: {node.Coords.S}");
+                        }
+                        break;
+                    case PathStatus.TooExpensive:
+                        int deficit = result.TotalCost - 100; // Assuming 100 was the fuel passed in
+                        Console.WriteLine($"Path found, but it is too expensive! It costs {result.TotalCost} fuel.");
+                        Console.WriteLine($"You need {deficit} more fuel to complete this trip.");
+                        break;
+                    case PathStatus.Unreachable:
+                        Console.WriteLine("No path possible. The destination is unreachable.");
+                        break;
+                    default:
+                        Console.WriteLine("An Error occured while generating the path.");
+                        break;
                 }
             }
 
@@ -73,6 +83,24 @@ namespace Hex_Grid_logistics_system
             Console.ReadLine();
         }
 
+        public enum PathStatus { Success, TooExpensive, Unreachable }
+
+        public struct PathResult
+        {
+            public List<int> Path;
+            public int TotalCost;
+            public PathStatus Status;
+
+            public PathResult(List<int> path, int totalCost, PathStatus status)
+            {
+                this.Path = path;
+                this.TotalCost = totalCost;
+                this.Status = status;
+            }
+
+            // A helper to quickly check if we can actually move
+            public bool IsViable => Status == PathStatus.Success;
+        }
         class HexGrid
         {
             private HexNode[] _nodes;
@@ -195,9 +223,11 @@ namespace Hex_Grid_logistics_system
         {
             private int[] _cameFrom;
             private int[] _costSoFar;
-
-            public List<int> FindPath(HexGrid grid, HexNode start, HexNode end)
+            private PathResult _result;
+            public PathResult FindPath(HexGrid grid, HexNode start, HexNode end, int FuelAvailable, bool ignoreFuelConstraint = false)
             {
+                _result = new PathResult(new List<int>(), 0, PathStatus.Unreachable);
+                int PathCost = 0;
                 int mapSize = grid.GetTotalSize(); // width * width
                 int endIndex = grid.GetIndex(end.Coords);
                 int startIndex = grid.GetIndex(start.Coords);
@@ -232,16 +262,21 @@ namespace Hex_Grid_logistics_system
                             temp = _cameFrom[temp];
                         }
                         path.Reverse();
-                        return path;
+                        PathCost = LogisticsEngine.CalculatePathCost(path, grid);
+                        _result.Path = path;
+                        _result.Status = LogisticsEngine.CanMakeTrip(FuelAvailable, PathCost) ? PathStatus.Success : PathStatus.TooExpensive;
+                        _result.TotalCost = LogisticsEngine.CalculatePathCost(path, grid);
+                        return _result;
                     }
 
                     foreach (int neighbor in grid.GetNeighborIndices(current))
                     {
-                        // Skip invalid/unpassable neighbors
+                        // Skip invalid/unpassable neighbors/paths that exceed cost
                         var node = grid.GetNodeByIndex(neighbor);
-                        if (!node.hasValue || !node.IsPassable) continue;
-
                         int newCost = _costSoFar[current] + node.MovementCost;
+                        if (!node.hasValue || !node.IsPassable || (!ignoreFuelConstraint && (newCost > FuelAvailable))) continue;
+                                           
+
 
                         if (newCost < _costSoFar[neighbor])
                         {
@@ -254,7 +289,7 @@ namespace Hex_Grid_logistics_system
                         }
                     }
                 }
-                return null; // No path found
+                return _result; // No path found
             }
         }
 
@@ -262,6 +297,11 @@ namespace Hex_Grid_logistics_system
         {
             public HexNode CurrentLocation;
             public int MovementPoints;
+            private int _maxFuel = 200;
+            private int _currentFuel = 100;
+
+            public void ConsumeFuel(int ConsumedFuel) => _currentFuel = Math.Max(0, _currentFuel - ConsumedFuel);
+            
             public void Requestpath(HexNode destination)
             {
 
@@ -355,16 +395,20 @@ namespace Hex_Grid_logistics_system
             }
         }
 
-        class LogisticsEngine
+        static class LogisticsEngine
         {
-            public int CalculateTotalFuel(List<HexNode> path)
+            static public int CalculatePathCost(List<int> path, HexGrid grid)
             {
-                if (path == null || path.Count <= 1) return 0;
-
-                // We don't pay for the tile we are already standing on.
-                // Skip(1) starts the sum from the first move.
-                return path.Skip(1).Sum(node => node.MovementCost);
+                int pathCost = 0;
+                for (int i = 1; i < path.Count; i++)
+                {
+                    pathCost += grid.GetNodeByIndex(path[i]).MovementCost; // Get the index of the Node on tha path and its movement cost to the total
+                }
+                return pathCost;
             }
+
+            static public bool CanMakeTrip(int fuelAvailable, int pathCost) => (pathCost <= fuelAvailable);
+
         }
 
         public class SimplePriorityQueue // Had to use this since the normal priority queue wasn't available
