@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Runtime.InteropServices;
@@ -12,9 +12,11 @@ namespace Hex_Grid_logistics_system
     {
         static void Main(string[] args)
         {
-            HexGrid myGrid = new HexGrid();
+	// trying to collapse data structures to obtain as much O(1) as possible and have millions of nodes at a time
+            HexNode[] map = new HexNode[1000000];
             int radius = 5;
-            myGrid.GenerateMap(radius);
+            HexGrid myGrid = new HexGrid();
+            myGrid.GenerateMap();
 
             Console.WriteLine($"Map generated with radius {radius}.");
 
@@ -22,7 +24,7 @@ namespace Hex_Grid_logistics_system
             HexCoords center = new HexCoords(0, 0, 0);
             HexNode centerNode = myGrid.GetNode(center);
 
-            if (centerNode != null)
+            if (centerNode.hasValue)
             {
                 Console.WriteLine("Center node found. Finding neighbors...");
                 var neighbors = myGrid.GetNeighbors(centerNode);
@@ -39,7 +41,7 @@ namespace Hex_Grid_logistics_system
             HexCoords destCoords = new HexCoords(5, -3, -2);
             HexNode DestinationNode = myGrid.GetNode(destCoords);
 
-            if (DestinationNode == null)
+            if (!DestinationNode.hasValue)
             {
                 Console.WriteLine("Destination is outside the map radius!");
             }
@@ -71,17 +73,24 @@ namespace Hex_Grid_logistics_system
 
         class HexGrid
         {
-            // Dictionary for O(1) instant lookup of any tile
-            private Dictionary<HexCoords, HexNode> _nodes;
+            private HexNode[] _nodes;
+            private int _radius;
 
+            public HexGrid(int radius) => _radius = radius;
             public HexNode GetNode(HexCoords coords)
             {
-                // TryGetValue assigns the result to 'node' and returns true if successful
-                if (_nodes.TryGetValue(coords, out HexNode node))
+                //  Math-based Bounds Check
+                if (Math.Abs(coords.Q) > _radius || Math.Abs(coords.R) > _radius || Math.Abs(coords.S) > _radius)
                 {
-                    return node;
+                    return new HexNode(); // Out of bounds, return empty struct
                 }
-                return null;
+                // Get index from flattened 2D array
+                int width = _radius * 2 + 1;
+                int q_offset = coords.Q + _radius;
+                int r_offset = coords.R + _radius;
+                int i = r_offset * width + q_offset;
+
+                return _nodes[i];
             }
             public List<HexNode> GetNeighbors(HexNode center)
             {
@@ -92,19 +101,20 @@ namespace Hex_Grid_logistics_system
 
                     HexCoords newCoords = center.Coords + currentCoords;
                     HexNode newNode = GetNode(newCoords);
-                    if (newNode != null) neighbours.Add(newNode);
+                    if (newNode.hasValue) neighbours.Add(newNode);
                 }
 
                 return neighbours;
             }
 
-            public void GenerateMap(int radius)
+            public void GenerateMap()
             {
-                _nodes = new Dictionary<HexCoords, HexNode>();
+                int width = 2 * _radius + 1;
+                _nodes = new HexNode[width * width];
                 Random rand = new Random();
-                for (int q = -radius; q <= radius; q++)
+                for (int q = -_radius; q <= _radius; q++)
                 {
-                    for (int r = Math.Max(-radius, -q - radius); r <= Math.Min(radius, -q + radius); r++)
+                    for (int r = Math.Max(-_radius, -q - _radius); r <= Math.Min(_radius, -q + _radius); r++)
                     {
                         int s = -q - r;
                         int SwampChance = rand.Next(0, 100);
@@ -121,25 +131,29 @@ namespace Hex_Grid_logistics_system
 
                         HexCoords coords = new HexCoords(q, r, s);
                         HexNode newNode = new HexNode(coords, terrainType);
-                        _nodes.Add(coords, newNode);
+                        int q_offset = q + _radius;
+                        int r_offset = r + _radius;
+                        int i = r_offset * width + q_offset; // Essentially reducing a 2d list to a 1d one, y * width + x, but we add an offset because we loop from -radius->radius, and a negative number would give an out of inder error
+                        _nodes[i] = newNode;
                     }
                 }
             }
         }
 
-        class HexNode
+         public  struct HexNode
         {
-            public HexCoords Coords;
-            public int MovementCost; // 1 for plains, 5 for swamp
-            public bool IsPassable;  // Some tiles (Mountains/Deep Water) might be 0
-            public TerrainType Type; // Each terrain has different special rules
-
+             public HexCoords Coords { get; }
+            public int MovementCost { get; } // 1 for plains, 5 for swamp
+            public bool IsPassable { get; }  // Some tiles (Mountains/Deep Water) might be 0
+            public TerrainType Type { get; } // Each terrain has different special rules
+            public bool hasValue { get; }
             public HexNode(HexCoords coords, TerrainType type)
             {
                 Coords = coords;
                 Type = type;
                 MovementCost = Type.movementCost;
                 IsPassable = Type.passable;
+                hasValue = false;
             }
         }
 
@@ -158,7 +172,7 @@ namespace Hex_Grid_logistics_system
                 Dictionary<HexNode, HexNode> cameFrom = new Dictionary<HexNode, HexNode>();
                 Dictionary<HexNode, int> costSoFar = new Dictionary<HexNode, int>();
 
-                cameFrom[start] = null;
+                cameFrom[start] = new HexNode();
                 costSoFar[start] = 0;
 
                 while (openSet.Count > 0)
@@ -169,12 +183,12 @@ namespace Hex_Grid_logistics_system
                     //  Remove it so we don't process it again
                     openSet.Remove(current);
 
-                    if (current == end)
+                    if (current.Coords == end.Coords)
                     {
                         // RECONSTRUCT PATH
                         List<HexNode> path = new List<HexNode>();
                         HexNode temp = end;
-                        while (temp != null)
+                        while (temp.hasValue)
                         {
                             path.Add(temp);
                             temp = cameFrom[temp];
@@ -235,9 +249,11 @@ namespace Hex_Grid_logistics_system
             }
         }
 
-        struct HexCoords
+         public struct HexCoords
         {
-            public int Q, R, S;
+            public int Q { get; }
+            public int R { get; }
+            public int S { get; }
 
             public HexCoords(int q, int r, int s)
             {
@@ -262,14 +278,34 @@ namespace Hex_Grid_logistics_system
             {
                 return new HexCoords(a.Q + b.Q, a.R + b.R, a.S + b.S);
             }
+            public static HexCoords operator -(HexCoords a, HexCoords b)
+            {
+                return new HexCoords(a.Q - b.Q, a.R - b.R, a.S - b.S);
+            }
+            public static HexCoords operator *(HexCoords a, HexCoords b)
+            {
+                return new HexCoords(a.Q * b.Q, a.R * b.R, a.S * b.S);
+            }
+            public static HexCoords operator /(HexCoords a, HexCoords b)
+            {
+                return new HexCoords(a.Q / b.Q, a.R / b.R, a.S / b.S);
+            }
+            public static bool operator ==(HexCoords a, HexCoords b)
+            {
+                return a.Q == b.Q && a.R == b.R && a.S == b.S;
+            }
+            public static bool operator !=(HexCoords a, HexCoords b)
+            {
+                return a.Q != b.Q && a.R != b.R && a.S != b.S;
+            }
 
         }
 
-        struct TerrainType
+        public struct TerrainType
         {
-            public string type;
-            public int movementCost;
-            public bool passable;
+            public string type { get; }
+            public int movementCost { get; }
+            public bool passable { get; }
 
             public TerrainType(string type, int movementCost, bool passable)
             {
@@ -292,3 +328,5 @@ namespace Hex_Grid_logistics_system
         }
     }
 }
+
+
