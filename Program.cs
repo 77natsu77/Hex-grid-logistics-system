@@ -15,7 +15,7 @@ namespace Hex_Grid_logistics_system
         {
             // ADDED FUEL CONSTRAINT
             // I WILL WORK TOWARDS ADDING MORE CONSTRAINTS AND OBJECTIVE FUNCTIONS AND STUFF IN THE FUTURE AS THIS PROJECT WAS MEANT TO BE GRAPH THEORY PRACTICE I FORGOT ABOUT
-            HexNode[] map = new HexNode[1000000];
+            /*HexNode[] map = new HexNode[1000000];
             int radius = 300;
             HexGrid myGrid = new HexGrid(radius);
             myGrid.GenerateMap();
@@ -40,7 +40,7 @@ namespace Hex_Grid_logistics_system
 
             Agent myAgent = new Agent(centerNode);
             Pathfinder myPathfinder = new Pathfinder();
-            HexCoords destCoords = new HexCoords(50, 50, -100);
+            HexCoords destCoords = new HexCoords(40,60,-100);
             HexNode DestinationNode = myGrid.GetNodeByCoords(destCoords);
 
             if (!DestinationNode.hasValue)
@@ -54,7 +54,7 @@ namespace Hex_Grid_logistics_system
             else
             {
                 // Pass the agent's fuel and set ignoreFuelConstraint to true to get diagnostic data
-                PathResult result = myPathfinder.FindPath(myGrid, centerNode, DestinationNode, 100, true);
+                PathResult result = LogisticsEngine.PlanRouteWithRefuel(myGrid,myAgent, DestinationNode, myPathfinder); //myPathfinder.FindPath(myGrid, centerNode, DestinationNode, 100, true);
                 switch (result.Status)
                 {
                     case PathStatus.Success:
@@ -80,11 +80,32 @@ namespace Hex_Grid_logistics_system
             }
 
 
-            Console.ReadLine();
+            Console.ReadLine();*/
+            int radius = 300;
+            HexGrid myGrid = new HexGrid(radius);
+            myGrid.GenerateMap();
+
+            HexCoords center = new HexCoords(0, 0, 0);
+            HexNode centerNode = myGrid.GetNodeByCoords(center);
+            Pathfinder myPathfinder = new Pathfinder(myGrid);
+
+            Console.WriteLine($"Map generated with radius {radius}.");
+            Agent myAgent = new Agent(centerNode,myGrid, myPathfinder);
+            AgentJob newJob = new AgentJob { CargoAmount = 100, PickUpIndex = 15, DropOffIndex = 300 };
+            myAgent.AssignJob(newJob);
+            myAgent.PlanPath();
+
         }
 
         public enum PathStatus { Success, TooExpensive, Unreachable }
+        public enum AgentState { Idle, EnRouteToPickup, EnRouteToDropoff }
 
+        public struct AgentJob
+        {
+            public int PickUpIndex;
+            public int DropOffIndex;
+            public int CargoAmount;
+        }
         public struct PathResult
         {
             public List<int> Path;
@@ -106,8 +127,10 @@ namespace Hex_Grid_logistics_system
             private HexNode[] _nodes;
             private int _radius;
             private int _width;
-
-            public HexGrid(int radius)
+            private int _minCost = int.MaxValue;
+            public int MinCost => _minCost;
+            List<int> _refuelStationIndices = new List<int>();
+        public HexGrid(int radius)
             {
                 _radius = radius;
                 _width = 2 * _radius + 1;
@@ -119,6 +142,9 @@ namespace Hex_Grid_logistics_system
             {
                 return (coords.R + _radius) * _width + (coords.Q + _radius);
             }
+
+            public List<int> GetRefuelStationIndices() => _refuelStationIndices;
+
 
             public HexNode GetNodeByIndex(int index) => _nodes[index]; // should add exception handling here...
 
@@ -171,32 +197,45 @@ namespace Hex_Grid_logistics_system
 
             public void GenerateMap()
             {
-                Random rand = new Random();
+                Random rand = new Random(); //TODO MOVE THIS RANDOM OUT OF HERE SO WE CAN ADDD SEEDS
                 for (int q = -_radius; q <= _radius; q++)
                 {
                     for (int r = Math.Max(-_radius, -q - _radius); r <= Math.Min(_radius, -q + _radius); r++)
                     {
                         int s = -q - r;
-                        int SwampChance = rand.Next(0, 100);
-                        int MountainChance = rand.Next(0, 100);
-                        TerrainType terrainType = new TerrainType("Plains", 1, true);
-                        if (SwampChance < 20)
-                        {
-                            terrainType = new TerrainType("Swamp", 5, true);
-                        }
-                        else if (MountainChance < 10)
-                        {
-                            terrainType = new TerrainType("Mountain", 1, false);
-                        }
-
-                        HexCoords coords = new HexCoords(q, r, s);
-                        HexNode newNode = new HexNode(coords, terrainType);
                         int q_offset = q + _radius;
                         int r_offset = r + _radius;
                         int i = r_offset * _width + q_offset; // Essentially reducing a 2d list to a 1d one, y * width + x, but we add an offset because we loop from -radius->radius, and a negative number would give an out of inder error
+
+                        int SwampChance = rand.Next(0, 100);
+                        int MountainChance = rand.Next(0, 100);
+                        int OutpostChance = rand.Next(0, 100);
+                        TerrainType terrainType = new TerrainType("Plains", 1, true);
+                        if (SwampChance < 20) // CHECK IF A SWITCH WOULD BE FASTER
+                        {
+                            terrainType = new TerrainType("Swamp", 5, true);
+                        }
+                        else if (MountainChance < 5)
+                        {
+                            terrainType = new TerrainType("Mountain", 1, false);
+                        }
+                        else if (OutpostChance < 15)
+                        {
+                            terrainType = new TerrainType("Outpost", 1, false);
+                            _refuelStationIndices.Add(i);
+                        }
+
+                         HexCoords coords = new HexCoords(q, r, s);
+                        HexNode newNode = new HexNode(coords, terrainType);
                         _nodes[i] = newNode;
+
+                        if (terrainType.movementCost < _minCost)// getting minimum movement cost for pathfinding refinement
+                        {
+                            _minCost = terrainType.movementCost;
+                        }
                     }
                 }
+
             }
 
             public int GetHeuristic(int i, int j) => GetNodeByIndex(i).Coords.GetDistance(GetNodeByIndex(j).Coords);
@@ -204,7 +243,7 @@ namespace Hex_Grid_logistics_system
 
          public  struct HexNode
         {
-             public HexCoords Coords { get; }
+            public HexCoords Coords { get; }
             public int MovementCost { get; } // 1 for plains, 5 for swamp
             public bool IsPassable { get; }  // Some tiles (Mountains/Deep Water) might be 0
             public TerrainType Type { get; } // Each terrain has different special rules
@@ -221,67 +260,78 @@ namespace Hex_Grid_logistics_system
 
         class Pathfinder
         {
+           
+            private HexGrid _grid;
+            private PathResult _result;
             private int[] _cameFrom;
             private int[] _costSoFar;
-            private PathResult _result;
+            private int[] _nodeSearchID;
+            private int _currentSearchID = -1;
+            private List<int> _path;
+            private SimplePriorityQueue openSet;
+
+            public Pathfinder(HexGrid grid)
+            {
+                // Parallel arrays
+                _cameFrom = new int[grid.GetTotalSize()];
+                _costSoFar = new int[grid.GetTotalSize()];
+                _nodeSearchID = new int[grid.GetTotalSize()];
+            }
             public PathResult FindPath(HexGrid grid, HexNode start, HexNode end, int FuelAvailable, bool ignoreFuelConstraint = false)
             {
+                _currentSearchID++;
                 _result = new PathResult(new List<int>(), 0, PathStatus.Unreachable);
                 int PathCost = 0;
                 int mapSize = grid.GetTotalSize(); // width * width
                 int endIndex = grid.GetIndex(end.Coords);
                 int startIndex = grid.GetIndex(start.Coords);
-                // parallel arrays
-                _cameFrom = new int[mapSize];
-                _costSoFar = new int[mapSize];
-
-                // Initialize with sentinels, Array.Fill not available on current .Net version...
-
-                for (int i = 0; i < _cameFrom.Length; i++) { _cameFrom[i] = -1; }
-                for (int i = 0; i < _costSoFar.Length; i++) { _costSoFar[i] = int.MaxValue; }
 
                 // 2. PriorityQueue <NodeIndex, Priority>
                 // Priority is f(n) = g(n) + h(n)
-                var openSet = new SimplePriorityQueue();
+                openSet = new SimplePriorityQueue();
 
                 _costSoFar[startIndex] = 0;
                 openSet.Enqueue(startIndex, 0);
 
                 while (openSet.Count > 0)
                 {
-                    int current = openSet.Dequeue();
+                    int currentIndex = openSet.Dequeue();
 
-                    if (current == endIndex)
+                    if (currentIndex == endIndex)
                     {
                         // RECONSTRUCT PATH
-                        List<int> path = new List<int>();
+                        _path = new List<int>();
                         int temp = endIndex;
                         while (temp != -1)
                         {
-                            path.Add(temp);
+                            _path.Add(temp);
                             temp = _cameFrom[temp];
                         }
-                        path.Reverse();
-                        PathCost = LogisticsEngine.CalculatePathCost(path, grid);
-                        _result.Path = path;
+                        _path.Reverse();
+                        PathCost = LogisticsEngine.CalculatePathCost(_path, grid);
+                        _result.Path = _path;
                         _result.Status = LogisticsEngine.CanMakeTrip(FuelAvailable, PathCost) ? PathStatus.Success : PathStatus.TooExpensive;
-                        _result.TotalCost = LogisticsEngine.CalculatePathCost(path, grid);
+                        _result.TotalCost = LogisticsEngine.CalculatePathCost(_path, grid);
                         return _result;
                     }
 
-                    foreach (int neighbor in grid.GetNeighborIndices(current))
+                    foreach (int neighbor in grid.GetNeighborIndices(currentIndex))
                     {
                         // Skip invalid/unpassable neighbors/paths that exceed cost
                         var node = grid.GetNodeByIndex(neighbor);
-                        int newCost = _costSoFar[current] + node.MovementCost;
+                        int newCost = _costSoFar[currentIndex] + node.MovementCost;
                         if (!node.hasValue || !node.IsPassable || (!ignoreFuelConstraint && (newCost > FuelAvailable))) continue;
-                                           
+                        if (_nodeSearchID[currentIndex] != _currentSearchID)
+                        {
+                            _cameFrom[currentIndex] = -1;
+                            _costSoFar[currentIndex] = int.MaxValue;
+                        }
 
 
                         if (newCost < _costSoFar[neighbor])
                         {
                             _costSoFar[neighbor] = newCost;
-                            _cameFrom[neighbor] = current;
+                            _cameFrom[neighbor] = currentIndex;
 
                             // Priority = Cost + Heuristic
                             int priority = newCost + grid.GetHeuristic(neighbor, endIndex);
@@ -296,36 +346,50 @@ namespace Hex_Grid_logistics_system
         class Agent
         {
             public HexNode CurrentLocation;
+            public AgentJob CurrentJob;
             public int MovementPoints;
-            private int _maxFuel = 200;
-            private int _currentFuel = 100;
+            public int MaxFuel = 200;
+            public  int CurrentFuel = 100;
+            private HexGrid _grid;
+            private Pathfinder _pathfinder;
+            public void ConsumeFuel(int ConsumedFuel) => CurrentFuel = Math.Max(0, CurrentFuel - ConsumedFuel);
 
-            public void ConsumeFuel(int ConsumedFuel) => _currentFuel = Math.Max(0, _currentFuel - ConsumedFuel);
-            
-            public void Requestpath(HexNode destination)
+            public void AssignJob(AgentJob newJob) => CurrentJob = newJob;
+            public void PlanPath()
             {
-
-            }
-
-            public void MoveAlongPath(List<HexNode> path)
-            {
-                int remainingPoints = MovementPoints;
-
-                // Logic: 
-                foreach (HexNode nextNode in path.Skip(1))
+                PathResult Leg1 = new PathResult();
+                PathResult Leg2 = new PathResult();
+                //CONTINUE WORKING ON THIS, ADD THE OTHER PATHS, DONT FORGET TO ADD WIEGHT
+                // Move from current location to pick up locaton
+                Leg1 = LogisticsEngine.PlanRouteWithRefuel(_grid, this, this.CurrentLocation, _grid.GetNodeByIndex(CurrentJob.PickUpIndex), _pathfinder);
+                if (Leg1.Status == PathStatus.Success)
                 {
-                    if (remainingPoints >= nextNode.MovementCost)
-                    {
-                        CurrentLocation = nextNode;
-                        remainingPoints -= nextNode.MovementCost;
-                    }
-                    if (remainingPoints == 0) break;
+                    //this.MoveAlongPath(Leg1.Path);
+                    HexNode newLocationIndex = _grid.GetNodeByIndex(Leg1.Path[Leg1.Path.Count-1]);
+                    // if path is valid move from pick up locaton to drop off location
+                    Leg2 = LogisticsEngine.PlanRouteWithRefuel(_grid, this, newLocationIndex, _grid.GetNodeByIndex(CurrentJob.PickUpIndex), _pathfinder);
+                   
                 }
+                if (Leg2.Status == PathStatus.Success)
+                {
+                    Console.WriteLine("Successful");
+                }
+                else
+                {
+                    Console.WriteLine("Failure");
+                }
+                Console.WriteLine($"{Leg1.Status}, {Leg2.Status}");
+
             }
 
-            public Agent(HexNode location)
+            public void MoveAlongPath(List<int> path) => this.CurrentLocation = _grid.GetNodeByIndex(path[-1]);
+
+
+            public Agent(HexNode location, HexGrid grid, Pathfinder pathfinder)
             {
                 CurrentLocation = location;
+                _grid = grid;
+                _pathfinder = pathfinder;
             }
         }
            
@@ -381,7 +445,7 @@ namespace Hex_Grid_logistics_system
 
         }
 
-        public struct TerrainType
+        public struct TerrainType //IMPLEMENT ENUMS, DIDNT KNOW ABOUT THEM A MONTH AGO SO FORGOT
         {
             public string type { get; }
             public int movementCost { get; }
@@ -405,6 +469,65 @@ namespace Hex_Grid_logistics_system
                     pathCost += grid.GetNodeByIndex(path[i]).MovementCost; // Get the index of the Node on tha path and its movement cost to the total
                 }
                 return pathCost;
+            }
+            public static PathResult PlanRouteWithRefuel(HexGrid grid, Agent agent, HexNode start, HexNode destination, Pathfinder pathfinder) //DOES NOT WORK EFFICIENTLY. REFACTOR LOGIC ASAP
+            {
+                //  Try a direct path first (Ignore fuel constraint to see total cost)
+                HexNode agentLocation = start;
+                PathResult direct = pathfinder.FindPath(grid, agentLocation, destination, agent.CurrentFuel);
+                if (direct.Status == PathStatus.Success) return direct;
+                //  If too expensive, look for an Oasis
+                List<int> stations = grid.GetRefuelStationIndices();
+                int bestTotalCost = int.MaxValue;
+                PathResult bestLeg1 = new PathResult();
+                PathResult bestLeg2 = new PathResult();
+                PathResult Final = new PathResult();
+                PathResult Leg1 = new PathResult();
+                PathResult Leg2 = new PathResult();
+                HexNode stationNode;
+                foreach (int stationIdx in stations)
+                {
+                    // Apply Geometric Pre-Filter here (Distance checks)
+                    stationNode = grid.GetNodeByIndex(stationIdx);
+                    int distToStation = agentLocation.Coords.GetDistance(stationNode.Coords);
+                    // If even a straight line of Plains is too expensive, skip this station.
+                    if (distToStation * grid.MinCost > agent.CurrentFuel) continue;
+
+                    // TODO: If it passes pre-filter, Calculate Leg 1 and Leg 2
+                   
+                    Leg1 = pathfinder.FindPath(grid, agentLocation, stationNode, agent.CurrentFuel);
+                    Leg2 = pathfinder.FindPath(grid, stationNode, destination, agent.MaxFuel);
+                    if (Leg1.Status == PathStatus.Success && Leg2.Status == PathStatus.Success) //if path is possible
+                    {
+                        Console.WriteLine("found viable path");
+                        if (Leg1.TotalCost <= agent.CurrentFuel && Leg2.TotalCost <= agent.MaxFuel)// if path is within fuel limit
+                        {
+                            if (Leg1.TotalCost + Leg2.TotalCost < bestTotalCost) // compare best and store
+                            {
+                                bestLeg1 = Leg1;
+                                bestLeg2 = Leg2;
+                                bestTotalCost = bestLeg1.TotalCost + bestLeg2.TotalCost;
+                                Console.WriteLine("New best path");
+                            }
+                        }
+                    }
+                    
+                }
+
+                //  Combine Leg 1 and Leg 2 into a single PathResult or return a 'failure'
+                if (bestLeg1.Path != null && bestLeg2.Path != null)
+                {
+                    Final.Path.AddRange(bestLeg1.Path);
+                    Final.Path.AddRange(bestLeg2.Path.Skip(1));
+                    Final.Status = PathStatus.Success;
+                    Final.TotalCost = bestTotalCost;
+                }
+                else
+                {
+                    Final.Status = PathStatus.Unreachable;
+                }
+
+                    return Final;
             }
 
             static public bool CanMakeTrip(int fuelAvailable, int pathCost) => (pathCost <= fuelAvailable);
