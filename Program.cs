@@ -13,74 +13,7 @@ namespace Hex_Grid_logistics_system
     {
         static void Main(string[] args)
         {
-            // ADDED FUEL CONSTRAINT
-            // I WILL WORK TOWARDS ADDING MORE CONSTRAINTS AND OBJECTIVE FUNCTIONS AND STUFF IN THE FUTURE AS THIS PROJECT WAS MEANT TO BE GRAPH THEORY PRACTICE I FORGOT ABOUT
-            /*HexNode[] map = new HexNode[1000000];
-            int radius = 300;
-            HexGrid myGrid = new HexGrid(radius);
-            myGrid.GenerateMap();
-
-            Console.WriteLine($"Map generated with radius {radius}.");
-
-            // Test a coordinate
-            HexCoords center = new HexCoords(0, 0, 0);
-            HexNode centerNode = myGrid.GetNodeByCoords(center);
-
-            if (centerNode.hasValue)
-            {
-                Console.WriteLine("Center node found. Finding neighbors...");
-                var neighbors = myGrid.GetNeighbors(centerNode);
-                Console.WriteLine($"Found {neighbors.Count} neighbors.");
-
-                foreach (var n in neighbors)
-                {
-                    Console.WriteLine($"Neighbor at: Q:{n.Coords.Q} R:{n.Coords.R} S:{n.Coords.S}");
-                }
-            }
-
-            Agent myAgent = new Agent(centerNode);
-            Pathfinder myPathfinder = new Pathfinder();
-            HexCoords destCoords = new HexCoords(40,60,-100);
-            HexNode DestinationNode = myGrid.GetNodeByCoords(destCoords);
-
-            if (!DestinationNode.hasValue)
-            {
-                Console.WriteLine("Destination is outside the map radius!");
-            }
-            else if (!DestinationNode.IsPassable)
-            {
-                Console.WriteLine("Destination is a mountain! Choose a different spot.");
-            }
-            else
-            {
-                // Pass the agent's fuel and set ignoreFuelConstraint to true to get diagnostic data
-                PathResult result = LogisticsEngine.PlanRouteWithRefuel(myGrid,myAgent, DestinationNode, myPathfinder); //myPathfinder.FindPath(myGrid, centerNode, DestinationNode, 100, true);
-                switch (result.Status)
-                {
-                    case PathStatus.Success:
-                        Console.WriteLine($"Path found! It will cost {result.TotalCost} fuel.");
-                        foreach (int index in result.Path)
-                        {
-                            HexNode node = myGrid.GetNodeByIndex(index);
-                            Console.WriteLine($"Q:{node.Coords.Q} R: {node.Coords.R} S: {node.Coords.S}");
-                        }
-                        break;
-                    case PathStatus.TooExpensive:
-                        int deficit = result.TotalCost - 100; // Assuming 100 was the fuel passed in
-                        Console.WriteLine($"Path found, but it is too expensive! It costs {result.TotalCost} fuel.");
-                        Console.WriteLine($"You need {deficit} more fuel to complete this trip.");
-                        break;
-                    case PathStatus.Unreachable:
-                        Console.WriteLine("No path possible. The destination is unreachable.");
-                        break;
-                    default:
-                        Console.WriteLine("An Error occured while generating the path.");
-                        break;
-                }
-            }
-
-
-            Console.ReadLine();*/
+            
             int radius = 300;
             HexGrid myGrid = new HexGrid(radius);
             myGrid.GenerateMap();
